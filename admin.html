@@ -13,6 +13,7 @@
         button.gruen { background: #28a745; margin-left: 10px; }
         ul { list-style-type: none; padding: 0; }
         li { padding: 10px 0; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+        .status-meldung { margin-top: 10px; color: #28a745; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -20,7 +21,8 @@
         <h2>Neues Set erfassen</h2>
         <input type="text" id="set-nummer" placeholder="Set-Nr. (z.B. 8860)">
         <input type="number" id="kisten-nummer" placeholder="Kiste (z.B. 1)">
-        <button onclick="setHinzufuegen()">Speichern</button>
+        <button onclick="setHinzufuegen()">Speichern & Importieren</button>
+        <div id="import-status" class="status-meldung"></div>
     </div>
 
     <div class="box">
@@ -34,19 +36,19 @@
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
+        // Rebrickable API Key
+        const rebrickableKey = 'a15f5dc6eee2f6b454ed87bab3b7a25c';
+
         // 1. Funktion für die Web Speech API
         function sprecheText(text) {
-            // Prüfen ob eine alte Sprachausgabe noch läuft und diese abbrechen
             window.speechSynthesis.cancel(); 
-            
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'de-DE'; // Deutsche Sprache erzwingen
+            utterance.lang = 'de-DE'; 
             window.speechSynthesis.speak(utterance);
         }
 
         // 2. Init-Scan starten
         function startInitScan(setNummer) {
-            // Hier kommt später das Einblenden der Kamera hinein
             sprecheText(`Achtung. Initialisierung des Sets ${setNummer} gestartet.`);
         }
 
@@ -57,7 +59,7 @@
             const { data, error } = await supabaseClient
                 .from('aktive_sets')
                 .select('*')
-                .order('id', { ascending: true }); // Sortiert nach Erstellungsdatum
+                .order('id', { ascending: true }); 
             
             if (error) {
                 liste.innerHTML = '<li>Fehler beim Laden.</li>';
@@ -82,7 +84,7 @@
                 const btnLoeschen = document.createElement('button');
                 btnLoeschen.textContent = 'Löschen';
                 btnLoeschen.className = 'rot';
-                btnLoeschen.onclick = () => setLoeschen(set.id);
+                btnLoeschen.onclick = () => setLoeschen(set.id, set.set_nummer);
 
                 buttonContainer.appendChild(btnInit);
                 buttonContainer.appendChild(btnLoeschen);
@@ -93,30 +95,94 @@
             });
         }
 
-        // 4. Neues Set in die Datenbank schreiben
+        // 4. Neues Set und Teile-Inventar aus Rebrickable importieren
         async function setHinzufuegen() {
-            const setNummer = document.getElementById('set-nummer').value;
-            const kistenNummer = document.getElementById('kisten-nummer').value;
+            let setNummer = document.getElementById('set-nummer').value.trim();
+            const kistenNummer = document.getElementById('kisten-nummer').value.trim();
+            const statusFeld = document.getElementById('import-status');
 
-            // Abbruch, wenn Felder leer sind
             if (!setNummer || !kistenNummer) return; 
 
-            await supabaseClient
-                .from('aktive_sets')
-                .insert([{ set_nummer: setNummer, kisten_nummer: parseInt(kistenNummer) }]);
-            
-            // Felder leeren und Liste neu laden
-            document.getElementById('set-nummer').value = '';
-            document.getElementById('kisten-nummer').value = '';
-            ladeSets();
+            // Rebrickable Formatierung sicherstellen
+            if (!setNummer.includes('-')) {
+                setNummer = setNummer + '-1';
+            }
+
+            statusFeld.textContent = "Lade Teile von Rebrickable...";
+
+            // API Anfrage an Rebrickable (page_size=1000 lädt bis zu 1000 verschiedene Teile auf einmal)
+            const apiUrl = `https://rebrickable.com/api/v3/lego/sets/${setNummer}/parts/?page_size=1000`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    headers: {
+                        'Authorization': `key ${rebrickableKey}`,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    statusFeld.textContent = "Fehler: Set bei Rebrickable nicht gefunden.";
+                    return;
+                }
+
+                const jsonDaten = await response.json();
+                const teileListe = jsonDaten.results;
+
+                if (!teileListe || teileListe.length === 0) {
+                    statusFeld.textContent = "Fehler: Keine Teile für dieses Set gefunden.";
+                    return;
+                }
+
+                // Daten in aktive_sets schreiben
+                await supabaseClient
+                    .from('aktive_sets')
+                    .insert([{ set_nummer: setNummer, kisten_nummer: parseInt(kistenNummer) }]);
+
+                // Die Rebrickable-Liste für unsere eigene Datenbank umbauen
+                const inventarEintraege = teileListe.map(eintrag => {
+                    return {
+                        set_nummer: setNummer,
+                        lego_teil_id: eintrag.part.part_num,
+                        anzahl_benoetigt: eintrag.quantity,
+                        anzahl_gefunden: 0
+                    };
+                });
+
+                // Alle Teile in einem Rutsch in teile_inventar speichern
+                await supabaseClient
+                    .from('teile_inventar')
+                    .insert(inventarEintraege);
+                
+                // Felder aufräumen
+                document.getElementById('set-nummer').value = '';
+                document.getElementById('kisten-nummer').value = '';
+                ladeSets();
+
+                statusFeld.textContent = `Erfolg! ${inventarEintraege.length} verschiedene Teile importiert.`;
+                
+                // Statusmeldung nach 5 Sekunden ausblenden
+                setTimeout(() => { statusFeld.textContent = ''; }, 5000);
+
+            } catch (error) {
+                console.error(error);
+                statusFeld.textContent = "Systemfehler beim Importieren der Daten.";
+            }
         }
 
         // 5. Set aus der Datenbank entfernen
-        async function setLoeschen(id) {
+        async function setLoeschen(id, setNummer) {
+            // Löscht das Set aus der Übersicht
             await supabaseClient
                 .from('aktive_sets')
                 .delete()
                 .eq('id', id);
+            
+            // Löscht alle dazugehörigen Einzelteile aus dem Inventar
+            await supabaseClient
+                .from('teile_inventar')
+                .delete()
+                .eq('set_nummer', setNummer);
             
             ladeSets();
         }
