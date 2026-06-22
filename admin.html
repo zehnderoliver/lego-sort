@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - Lego Sortier-App</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f9; max-width: 600px; }
+        .box { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 2rem;}
+        input { padding: 8px; margin-right: 10px; margin-bottom: 10px; width: 150px; }
+        button { padding: 8px 12px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button.rot { background: #dc3545; margin-left: 10px; }
+        button.gruen { background: #28a745; margin-left: 10px; }
+        ul { list-style-type: none; padding: 0; }
+        li { padding: 10px 0; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Neues Set erfassen</h2>
+        <input type="text" id="set-nummer" placeholder="Set-Nr. (z.B. 8860)">
+        <input type="number" id="kisten-nummer" placeholder="Kiste (z.B. 1)">
+        <button onclick="setHinzufuegen()">Speichern</button>
+    </div>
+
+    <div class="box">
+        <h2>Aktive Sets verwalten</h2>
+        <ul id="sets-liste">Lade Daten...</ul>
+    </div>
+
+    <script>
+        // Supabase Verbindung
+        const supabaseUrl = 'https://irvddkoodycgemahcyxr.supabase.co';
+        const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
+        const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        // 1. Funktion für die Web Speech API
+        function sprecheText(text) {
+            // Prüfen ob eine alte Sprachausgabe noch läuft und diese abbrechen
+            window.speechSynthesis.cancel(); 
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'de-DE'; // Deutsche Sprache erzwingen
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 2. Init-Scan starten
+        function startInitScan(setNummer) {
+            // Hier kommt später das Einblenden der Kamera hinein
+            sprecheText(`Achtung. Initialisierung des Sets ${setNummer} gestartet.`);
+        }
+
+        // 3. Sets aus der Datenbank laden
+        async function ladeSets() {
+            const liste = document.getElementById('sets-liste');
+            
+            const { data, error } = await supabaseClient
+                .from('aktive_sets')
+                .select('*')
+                .order('id', { ascending: true }); // Sortiert nach Erstellungsdatum
+            
+            if (error) {
+                liste.innerHTML = '<li>Fehler beim Laden.</li>';
+                return;
+            }
+
+            liste.innerHTML = ''; 
+            
+            data.forEach(set => {
+                const li = document.createElement('li');
+                
+                const textSpan = document.createElement('span');
+                textSpan.textContent = `Set ${set.set_nummer} -> Kiste ${set.kisten_nummer}`;
+                
+                const buttonContainer = document.createElement('div');
+
+                const btnInit = document.createElement('button');
+                btnInit.textContent = 'Init-Scan';
+                btnInit.className = 'gruen';
+                btnInit.onclick = () => startInitScan(set.set_nummer);
+
+                const btnLoeschen = document.createElement('button');
+                btnLoeschen.textContent = 'Löschen';
+                btnLoeschen.className = 'rot';
+                btnLoeschen.onclick = () => setLoeschen(set.id);
+
+                buttonContainer.appendChild(btnInit);
+                buttonContainer.appendChild(btnLoeschen);
+
+                li.appendChild(textSpan);
+                li.appendChild(buttonContainer);
+                liste.appendChild(li);
+            });
+        }
+
+        // 4. Neues Set in die Datenbank schreiben
+        async function setHinzufuegen() {
+            const setNummer = document.getElementById('set-nummer').value;
+            const kistenNummer = document.getElementById('kisten-nummer').value;
+
+            // Abbruch, wenn Felder leer sind
+            if (!setNummer || !kistenNummer) return; 
+
+            await supabaseClient
+                .from('aktive_sets')
+                .insert([{ set_nummer: setNummer, kisten_nummer: parseInt(kistenNummer) }]);
+            
+            // Felder leeren und Liste neu laden
+            document.getElementById('set-nummer').value = '';
+            document.getElementById('kisten-nummer').value = '';
+            ladeSets();
+        }
+
+        // 5. Set aus der Datenbank entfernen
+        async function setLoeschen(id) {
+            await supabaseClient
+                .from('aktive_sets')
+                .delete()
+                .eq('id', id);
+            
+            ladeSets();
+        }
+
+        // Start beim Öffnen der Seite
+        ladeSets();
+    </script>
+</body>
+</html>

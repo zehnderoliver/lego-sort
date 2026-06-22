@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Scan - Lego Sortier-App</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f9; text-align: center; }
+        .kamera-container { background: black; width: 100%; max-width: 600px; height: 450px; margin: 0 auto 20px auto; border-radius: 8px; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 8px; }
+        #status-text { margin-top: 20px; font-size: 1.5rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Scan-Station</h2>
+    
+    <div class="kamera-container">
+        <video id="kamera-stream" autoplay playsinline></video>
+    </div>
+    
+    <button onclick="simuliereScan()">Stein scannen (Simulation)</button>
+    <div id="status-text">Warte auf Scan...</div>
+
+    <script>
+        // Supabase Verbindung
+        const supabaseUrl = 'https://irvddkoodycgemahcyxr.supabase.co';
+        const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
+        const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        let aktiveSets = [];
+
+        // 1. Web Speech API für das Audio-Feedback
+        function sprecheText(text) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'de-DE';
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 2. Kamera des Geräts aktivieren
+        async function starteKamera() {
+            try {
+                // 'environment' greift bei Smartphones auf die Rückkamera zu
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                document.getElementById('kamera-stream').srcObject = stream;
+            } catch (err) {
+                document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert oder nicht gefunden.";
+            }
+        }
+
+        // 3. Aktive Sets aus der Datenbank laden
+        async function ladeSets() {
+            const { data } = await supabaseClient
+                .from('aktive_sets')
+                .select('*');
+            if (data) aktiveSets = data;
+        }
+
+        // 4. Den Erkennungsvorgang simulieren
+        function simuliereScan() {
+            if (aktiveSets.length === 0) {
+                document.getElementById('status-text').textContent = "Keine Sets in der Datenbank.";
+                sprecheText("Keine Sets aktiv");
+                return;
+            }
+            
+            // Wählt für den Test zufällig ein aktives Set aus der Liste
+            const zufallsSet = aktiveSets[Math.floor(Math.random() * aktiveSets.length)];
+            const text = `Kiste ${zufallsSet.kisten_nummer}`;
+            
+            // Ausgabe auf dem Bildschirm und über Audio
+            document.getElementById('status-text').textContent = `Erkannt: Set ${zufallsSet.set_nummer} -> ${text}`;
+            sprecheText(text);
+        }
+
+        // Start beim Öffnen der Seite
+        starteKamera();
+        ladeSets();
+    </script>
+</body>
+</html>
