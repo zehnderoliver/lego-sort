@@ -146,6 +146,26 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 video.srcObject = stream;
                 schreibeLog('Kamera erfolgreich gestartet.', 'erfolg');
+
+                // LED-Licht (Torch) aktivieren
+                const track = stream.getVideoTracks()[0];
+                
+                // Eine kurze Pause von 500ms hilft, da die Hardware einen Moment zum Initialisieren braucht
+                setTimeout(async () => {
+                    try {
+                        const capabilities = track.getCapabilities();
+                        // Pruefen, ob das Geraet ein steuerbares Licht hat
+                        if (capabilities.torch) {
+                            await track.applyConstraints({ advanced: [{ torch: true }] });
+                            schreibeLog('LED-Licht aktiviert.', 'erfolg');
+                        } else {
+                            schreibeLog('Browser unterstuetzt kein LED-Licht.', 'info');
+                        }
+                    } catch (e) {
+                        schreibeLog('Fehler beim Einschalten des Lichts.', 'warnung');
+                    }
+                }, 500);
+
             } catch (err) {
                 document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert.";
                 schreibeLog('Fehler beim Zugriff auf die Kamera.', 'warnung');
