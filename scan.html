@@ -62,6 +62,7 @@
     <div id="status-text">Starte Kamera...</div>
 
     <script>
+        alert("version 1.0.0");
         // Supabase Verbindung
         const supabaseUrl = 'https://irvddkoodycgemahcyxr.supabase.co';
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
@@ -111,6 +112,7 @@
         }
 
         async function steinZuweisen(roboflowName) {
+            alert("stein zuweisen: " + roboflowName);
             const legoTeilId = teileUebersetzung[roboflowName];
             if (!legoTeilId) return; 
 
