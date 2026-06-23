@@ -37,14 +37,41 @@
             object-fit: cover; 
         }
         #status-text { 
-            padding: 20px 10px; 
-            font-size: 1.3rem; 
+            padding: 15px 10px; 
+            font-size: 1.2rem; 
             font-weight: bold; 
             background: white; 
             margin: 0; 
             box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
             z-index: 10;
         }
+        
+        /* Neues Design fuer das Log-Fenster */
+        #log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 180px;
+            min-height: 180px;
+            overflow-y: auto;
+            text-align: left;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        #log-liste {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        #log-liste li {
+            padding: 3px 0;
+            border-bottom: 1px solid #333;
+        }
+        .log-zeit { color: #888; margin-right: 8px; }
+        .log-info { color: #569cd6; }
+        .log-erfolg { color: #4CAF50; font-weight: bold; }
+        .log-warnung { color: #ce9178; }
+
         /* Unsichtbares Canvas fuer die Foto-Aufnahme */
         #foto-canvas {
             display: none;
@@ -61,16 +88,18 @@
     
     <div id="status-text">Starte Kamera...</div>
 
+    <div id="log-container">
+        <ul id="log-liste"></ul>
+    </div>
+
     <script>
-        alert("version 1.0.0");
         // Supabase Verbindung
         const supabaseUrl = 'https://irvddkoodycgemahcyxr.supabase.co';
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        // Roboflow API Key (Aus deinem Snippet uebernommen)
+        // Roboflow API Key und korrekte URL (detect.roboflow.com statt serverless)
         const roboflowKey = 'KIoNLEwzEbiaqJy1nFS9';
-        // Wir nutzen Version /2 des Modells, wie in deinem Snippet angegeben
         const roboflowUrl = `https://detect.roboflow.com/lego-emmet-b200-object-detection/1?api_key=${roboflowKey}`;
 
         // Uebersetzungs-Liste
@@ -79,12 +108,37 @@
             "Brick 1x2": "3004",
             "Plate 1x2": "3023",
             "Technic Pin": "2780"
-            // Hier spaeter weitere Teile aus dem B200 Modell ergaenzen
         };
 
         let aktiveSets = [];
         let inventar = [];
         let scanPausiert = false;
+
+        // Funktion fuer Log-Eintraege
+        function schreibeLog(nachricht, typ = 'standard') {
+            const liste = document.getElementById('log-liste');
+            const eintrag = document.createElement('li');
+            
+            const jetzt = new Date();
+            const zeitString = `${jetzt.getHours().toString().padStart(2, '0')}:${jetzt.getMinutes().toString().padStart(2, '0')}:${jetzt.getSeconds().toString().padStart(2, '0')}`;
+            
+            let farbKlasse = '';
+            if (typ === 'info') farbKlasse = 'log-info';
+            if (typ === 'erfolg') farbKlasse = 'log-erfolg';
+            if (typ === 'warnung') farbKlasse = 'log-warnung';
+            
+            eintrag.innerHTML = `<span class="log-zeit">[${zeitString}]</span><span class="${farbKlasse}">${nachricht}</span>`;
+            liste.appendChild(eintrag);
+            
+            // Automatisch nach unten scrollen
+            const container = document.getElementById('log-container');
+            container.scrollTop = container.scrollHeight;
+            
+            // Historie auf maximal 50 Eintraege begrenzen, um Speicher zu schonen
+            if (liste.children.length > 50) {
+                liste.removeChild(liste.firstChild);
+            }
+        }
 
         function sprecheText(text) {
             window.speechSynthesis.cancel();
@@ -98,23 +152,29 @@
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 video.srcObject = stream;
+                schreibeLog('Kamera erfolgreich gestartet.', 'erfolg');
             } catch (err) {
                 document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert.";
+                schreibeLog('Fehler beim Zugriff auf die Kamera.', 'warnung');
             }
         }
 
         async function ladeDaten() {
+            schreibeLog('Lade Datenbank-Informationen...', 'info');
             const { data: sets } = await supabaseClient.from('aktive_sets').select('*');
             if (sets) aktiveSets = sets;
 
             const { data: teile } = await supabaseClient.from('teile_inventar').select('*');
             if (teile) inventar = teile;
+            schreibeLog(`${sets ? sets.length : 0} Sets und das Inventar geladen.`, 'erfolg');
         }
 
         async function steinZuweisen(roboflowName) {
-            alert("stein zuweisen: " + roboflowName);
             const legoTeilId = teileUebersetzung[roboflowName];
-            if (!legoTeilId) return; 
+            if (!legoTeilId) {
+                schreibeLog(`Keine Uebersetzung fuer "${roboflowName}" gefunden.`, 'warnung');
+                return; 
+            }
 
             const benoetigtesTeil = inventar.find(teil => 
                 teil.lego_teil_id === legoTeilId && 
@@ -128,6 +188,7 @@
                 
                 document.getElementById('status-text').textContent = `Erkannt: ${roboflowName} -> Kiste ${setInfo.kisten_nummer}`;
                 sprecheText(`Kiste ${setInfo.kisten_nummer}`);
+                schreibeLog(`Zuweisung: Kiste ${setInfo.kisten_nummer} fuer ${roboflowName}`, 'erfolg');
 
                 await supabaseClient.from('teile_inventar')
                     .update({ anzahl_gefunden: benoetigtesTeil.anzahl_gefunden + 1 })
@@ -139,34 +200,29 @@
                     document.getElementById('status-text').textContent = "Warte auf naechsten Stein...";
                     scanPausiert = false;
                 }, 2000);
+            } else {
+                schreibeLog(`Stein "${roboflowName}" wird aktuell in keinem Set benoetigt.`, 'warnung');
             }
         }
 
-        // Neue Funktion: Foto machen und an Roboflow API senden
         async function bildAnalysieren() {
-            // Wenn gerade eine Zuweisung laeuft, nichts tun
             if (scanPausiert) return;
 
             const video = document.getElementById('kamera-stream');
             const canvas = document.getElementById('foto-canvas');
             
-            // Warten bis Video wirklich laeuft
             if (!video.videoWidth) return;
 
-            // Foto-Format einstellen
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             const ctx = canvas.getContext('2d');
-            
-            // Frame aus dem Video auf das Canvas zeichnen
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Bild in Text umwandeln (Base64 JPEG)
-            // Das "split(',')[1]" entfernt den technischen Praefix, Roboflow braucht nur die nackten Daten
             const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
+            
+            schreibeLog('Sende Bild zur Analyse...', 'info');
 
             try {
-                // Senden an die Roboflow Cloud-API
                 const response = await fetch(roboflowUrl, {
                     method: "POST",
                     headers: {
@@ -177,21 +233,24 @@
 
                 const data = await response.json();
 
-                // Wenn Steine gefunden wurden
                 if (data.predictions && data.predictions.length > 0) {
-                    
-                    // Den Stein mit der hoechsten Treffer-Wahrscheinlichkeit filtern
                     const besterTreffer = data.predictions.reduce((prev, current) => 
                         (prev.confidence > current.confidence) ? prev : current
                     );
                     
-                    // Nur wenn sich die KI zu ueber 80% sicher ist
-                    if (besterTreffer.confidence > 0.8) {
+                    const sicherheit = Math.round(besterTreffer.confidence * 100);
+                    
+                    if (sicherheit >= 80) {
+                        schreibeLog(`Erkannt: ${besterTreffer.class} (${sicherheit}% Sicherheit)`, 'erfolg');
                         steinZuweisen(besterTreffer.class);
+                    } else {
+                        schreibeLog(`Unsichere Erkennung: ${besterTreffer.class} (nur ${sicherheit}%)`, 'warnung');
                     }
+                } else {
+                    schreibeLog('Antwort: Kein Legostein erkannt.');
                 }
             } catch (error) {
-                console.error("Fehler bei der API Anfrage:", error);
+                schreibeLog('Verbindungsfehler zur API.', 'warnung');
             }
         }
 
@@ -200,12 +259,10 @@
             await starteKamera();
             document.getElementById('status-text').textContent = "Warte auf Scan...";
             
-            // Wir scannen nicht mehr 30 Mal pro Sekunde, sondern schonen die API
-            // und schicken "nur" alle 1000 Millisekunden (1 Sekunde) ein Bild hoch.
+            // Bild-Analyse jede Sekunde ausfuehren
             setInterval(bildAnalysieren, 1000);
         }
 
-        // App starten
         starteApp();
     </script>
 </body>
