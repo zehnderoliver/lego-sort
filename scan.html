@@ -5,7 +5,6 @@
     <title>Scan - Lego Sortier-App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/roboflow@0.2.29/roboflow.js"></script>
     <style>
         body { 
             font-family: sans-serif; 
@@ -46,17 +45,9 @@
             box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
             z-index: 10;
         }
-        .overlay { 
-            position: absolute; 
-            top: 50%; 
-            left: 50%; 
-            transform: translate(-50%, -50%); 
-            background: rgba(0,0,0,0.8); 
-            color: white; 
-            padding: 15px 30px; 
-            border-radius: 8px; 
-            font-size: 1.2rem; 
-            white-space: nowrap;
+        /* Unsichtbares Canvas fuer die Foto-Aufnahme */
+        #foto-canvas {
+            display: none;
         }
     </style>
 </head>
@@ -65,10 +56,10 @@
     
     <div class="kamera-container">
         <video id="kamera-stream" autoplay playsinline muted></video>
-        <div id="lade-status" class="overlay">Lade KI-Modell (dies kann dauern)...</div>
+        <canvas id="foto-canvas"></canvas>
     </div>
     
-    <div id="status-text">Bitte warten...</div>
+    <div id="status-text">Starte Kamera...</div>
 
     <script>
         // Supabase Verbindung
@@ -76,15 +67,18 @@
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        // Roboflow API Key
+        // Roboflow API Key (Aus deinem Snippet uebernommen)
         const roboflowKey = 'KIoNLEwzEbiaqJy1nFS9';
+        // Wir nutzen Version /2 des Modells, wie in deinem Snippet angegeben
+        const roboflowUrl = `https://serverless.roboflow.com/lego-emmet-b200-object-detection/2?api_key=${roboflowKey}`;
 
-        // Uebersetzungs-Liste: Roboflow-Name -> Offizielle Rebrickable-Nummer
+        // Uebersetzungs-Liste
         const teileUebersetzung = {
             "Brick 2x4": "3001",
             "Brick 1x2": "3004",
             "Plate 1x2": "3023",
             "Technic Pin": "2780"
+            // Hier spaeter weitere Teile aus dem B200 Modell ergaenzen
         };
 
         let aktiveSets = [];
@@ -103,7 +97,6 @@
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
                 video.srcObject = stream;
-                return video;
             } catch (err) {
                 document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert.";
             }
@@ -118,8 +111,6 @@
         }
 
         async function steinZuweisen(roboflowName) {
-            if (scanPausiert) return;
-            
             const legoTeilId = teileUebersetzung[roboflowName];
             if (!legoTeilId) return; 
 
@@ -149,37 +140,70 @@
             }
         }
 
-        async function starteApp() {
-            await ladeDaten();
-            const videoElement = await starteKamera();
+        // Neue Funktion: Foto machen und an Roboflow API senden
+        async function bildAnalysieren() {
+            // Wenn gerade eine Zuweisung laeuft, nichts tun
+            if (scanPausiert) return;
 
-            const rf = await window.roboflow.auth({
-                publishable_key: roboflowKey
-            });
+            const video = document.getElementById('kamera-stream');
+            const canvas = document.getElementById('foto-canvas');
             
-            const modell = await rf.load({
-                model: "lego-emmet-b200-object-detection",
-                version: "1"
-            });
+            // Warten bis Video wirklich laeuft
+            if (!video.videoWidth) return;
 
-            document.getElementById('lade-status').style.display = 'none';
-            document.getElementById('status-text').textContent = "Warte auf Scan...";
+            // Foto-Format einstellen
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            
+            // Frame aus dem Video auf das Canvas zeichnen
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Bild in Text umwandeln (Base64 JPEG)
+            // Das "split(',')[1]" entfernt den technischen Praefix, Roboflow braucht nur die nackten Daten
+            const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
 
-            videoElement.addEventListener('play', async () => {
-                const analyseLoop = async () => {
-                    if (!videoElement.paused && !videoElement.ended && !scanPausiert) {
-                        const predictions = await modell.detect(videoElement);
-                        
-                        if (predictions.length > 0 && predictions[0].confidence > 0.8) {
-                            steinZuweisen(predictions[0].class);
-                        }
+            try {
+                // Senden an die Roboflow Cloud-API
+                const response = await fetch(roboflowUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    },
+                    body: base64Image
+                });
+
+                const data = await response.json();
+
+                // Wenn Steine gefunden wurden
+                if (data.predictions && data.predictions.length > 0) {
+                    
+                    // Den Stein mit der hoechsten Treffer-Wahrscheinlichkeit filtern
+                    const besterTreffer = data.predictions.reduce((prev, current) => 
+                        (prev.confidence > current.confidence) ? prev : current
+                    );
+                    
+                    // Nur wenn sich die KI zu ueber 80% sicher ist
+                    if (besterTreffer.confidence > 0.8) {
+                        steinZuweisen(besterTreffer.class);
                     }
-                    requestAnimationFrame(analyseLoop);
-                };
-                analyseLoop();
-            });
+                }
+            } catch (error) {
+                console.error("Fehler bei der API Anfrage:", error);
+            }
         }
 
+        async function starteApp() {
+            await ladeDaten();
+            await starteKamera();
+            document.getElementById('status-text').textContent = "Warte auf Scan...";
+            
+            // Wir scannen nicht mehr 30 Mal pro Sekunde, sondern schonen die API
+            // und schicken "nur" alle 1000 Millisekunden (1 Sekunde) ein Bild hoch.
+            setInterval(bildAnalysieren, 1000);
+        }
+
+        // App starten
         starteApp();
     </script>
 </body>
