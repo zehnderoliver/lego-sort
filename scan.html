@@ -4,23 +4,24 @@
     <meta charset="UTF-8">
     <title>Scan - Lego Sortier-App</title>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@roboflow/roboflow.js@0.2.22/dist/roboflow.js"></script>
     <style>
         body { font-family: sans-serif; padding: 2rem; background: #f4f4f9; text-align: center; }
-        .kamera-container { background: black; width: 100%; max-width: 600px; height: 450px; margin: 0 auto 20px auto; border-radius: 8px; overflow: hidden; }
+        .kamera-container { background: black; width: 100%; max-width: 600px; height: 450px; margin: 0 auto 20px auto; border-radius: 8px; overflow: hidden; position: relative; }
         video { width: 100%; height: 100%; object-fit: cover; }
-        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 8px; }
         #status-text { margin-top: 20px; font-size: 1.5rem; font-weight: bold; }
+        .overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 5px 10px; border-radius: 4px; }
     </style>
 </head>
 <body>
     <h2>Scan-Station</h2>
     
     <div class="kamera-container">
-        <video id="kamera-stream" autoplay playsinline></video>
+        <video id="kamera-stream" autoplay playsinline muted></video>
+        <div id="lade-status" class="overlay">Lade KI-Modell...</div>
     </div>
     
-    <button onclick="simuliereScan()">Stein scannen (Simulation)</button>
-    <div id="status-text">Warte auf Scan...</div>
+    <div id="status-text">Bitte warten...</div>
 
     <script>
         // Supabase Verbindung
@@ -28,9 +29,21 @@
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        let aktiveSets = [];
+        // Roboflow API Key
+        const roboflowKey = 'KIoNLEwzEbiaqJy1nFS9';
 
-        // 1. Web Speech API für das Audio-Feedback
+        // Übersetzungs-Liste: Roboflow-Name -> Offizielle Rebrickable-Nummer
+        const teileUebersetzung = {
+            "Brick 2x4": "3001",
+            "Brick 1x2": "3004",
+            "Plate 1x2": "3023",
+            "Technic Pin": "2780"
+        };
+
+        let aktiveSets = [];
+        let inventar = [];
+        let scanPausiert = false;
+
         function sprecheText(text) {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
@@ -38,45 +51,95 @@
             window.speechSynthesis.speak(utterance);
         }
 
-        // 2. Kamera des Geräts aktivieren
         async function starteKamera() {
+            const video = document.getElementById('kamera-stream');
             try {
-                // 'environment' greift bei Smartphones auf die Rückkamera zu
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-                document.getElementById('kamera-stream').srcObject = stream;
+                video.srcObject = stream;
+                return video;
             } catch (err) {
-                document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert oder nicht gefunden.";
+                document.getElementById('status-text').textContent = "Kamera-Zugriff verweigert.";
             }
         }
 
-        // 3. Aktive Sets aus der Datenbank laden
-        async function ladeSets() {
-            const { data } = await supabaseClient
-                .from('aktive_sets')
-                .select('*');
-            if (data) aktiveSets = data;
+        async function ladeDaten() {
+            const { data: sets } = await supabaseClient.from('aktive_sets').select('*');
+            if (sets) aktiveSets = sets;
+
+            const { data: teile } = await supabaseClient.from('teile_inventar').select('*');
+            if (teile) inventar = teile;
         }
 
-        // 4. Den Erkennungsvorgang simulieren
-        function simuliereScan() {
-            if (aktiveSets.length === 0) {
-                document.getElementById('status-text').textContent = "Keine Sets in der Datenbank.";
-                sprecheText("Keine Sets aktiv");
-                return;
+        async function steinZuweisen(roboflowName) {
+            if (scanPausiert) return;
+            
+            const legoTeilId = teileUebersetzung[roboflowName];
+            if (!legoTeilId) return; // Teil nicht in der Uebersetzungsliste
+
+            // Pruefen, welches Set dieses Teil aktuell benoetigt
+            const benoetigtesTeil = inventar.find(teil => 
+                teil.lego_teil_id === legoTeilId && 
+                teil.anzahl_gefunden < teil.anzahl_benoetigt
+            );
+
+            if (benoetigtesTeil) {
+                scanPausiert = true; 
+                
+                const setInfo = aktiveSets.find(s => s.set_nummer === benoetigtesTeil.set_nummer);
+                
+                document.getElementById('status-text').textContent = `Erkannt: ${roboflowName} -> Kiste ${setInfo.kisten_nummer}`;
+                sprecheText(`Kiste ${setInfo.kisten_nummer}`);
+
+                // In der Datenbank hochzaehlen
+                await supabaseClient.from('teile_inventar')
+                    .update({ anzahl_gefunden: benoetigtesTeil.anzahl_gefunden + 1 })
+                    .eq('id', benoetigtesTeil.id);
+
+                await ladeDaten();
+
+                // Scan nach 2 Sekunden wieder freigeben
+                setTimeout(() => {
+                    document.getElementById('status-text').textContent = "Warte auf naechsten Stein...";
+                    scanPausiert = false;
+                }, 2000);
             }
-            
-            // Wählt für den Test zufällig ein aktives Set aus der Liste
-            const zufallsSet = aktiveSets[Math.floor(Math.random() * aktiveSets.length)];
-            const text = `Kiste ${zufallsSet.kisten_nummer}`;
-            
-            // Ausgabe auf dem Bildschirm und über Audio
-            document.getElementById('status-text').textContent = `Erkannt: Set ${zufallsSet.set_nummer} -> ${text}`;
-            sprecheText(text);
         }
 
-        // Start beim Öffnen der Seite
-        starteKamera();
-        ladeSets();
+        async function starteApp() {
+            await ladeDaten();
+            const videoElement = await starteKamera();
+
+            // Roboflow initialisieren und Modell laden
+            const rf = await window.roboflow.auth({
+                publishable_key: roboflowKey
+            });
+            
+            const modell = await rf.load({
+                model: "lego-emmet-b200-object-detection",
+                version: "1"
+            });
+
+            document.getElementById('lade-status').style.display = 'none';
+            document.getElementById('status-text').textContent = "Warte auf Scan...";
+
+            // Analyse-Schleife
+            videoElement.addEventListener('play', async () => {
+                const analyseLoop = async () => {
+                    if (!videoElement.paused && !videoElement.ended && !scanPausiert) {
+                        const predictions = await modell.detect(videoElement);
+                        
+                        // Wenn ein Stein mit ueber 80% Sicherheit erkannt wurde
+                        if (predictions.length > 0 && predictions[0].confidence > 0.8) {
+                            steinZuweisen(predictions[0].class);
+                        }
+                    }
+                    requestAnimationFrame(analyseLoop);
+                };
+                analyseLoop();
+            });
+        }
+
+        starteApp();
     </script>
 </body>
 </html>
