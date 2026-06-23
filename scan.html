@@ -45,8 +45,6 @@
             box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
             z-index: 10;
         }
-        
-        /* Neues Design fuer das Log-Fenster */
         #log-container {
             background: #1e1e1e;
             color: #d4d4d4;
@@ -71,8 +69,6 @@
         .log-info { color: #569cd6; }
         .log-erfolg { color: #4CAF50; font-weight: bold; }
         .log-warnung { color: #ce9178; }
-
-        /* Unsichtbares Canvas fuer die Foto-Aufnahme */
         #foto-canvas {
             display: none;
         }
@@ -98,7 +94,7 @@
         const supabaseKey = 'sb_publishable_Grp7j_Ll5Ct2jo1fm7uNFg_AZGtOVn-';
         const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-        // Roboflow API Key und korrekte URL (detect.roboflow.com statt serverless)
+        // Roboflow API Key und URL
         const roboflowKey = 'KIoNLEwzEbiaqJy1nFS9';
         const roboflowUrl = `https://detect.roboflow.com/lego-emmet-b200-object-detection/1?api_key=${roboflowKey}`;
 
@@ -114,7 +110,6 @@
         let inventar = [];
         let scanPausiert = false;
 
-        // Funktion fuer Log-Eintraege
         function schreibeLog(nachricht, typ = 'standard') {
             const liste = document.getElementById('log-liste');
             const eintrag = document.createElement('li');
@@ -130,11 +125,9 @@
             eintrag.innerHTML = `<span class="log-zeit">[${zeitString}]</span><span class="${farbKlasse}">${nachricht}</span>`;
             liste.appendChild(eintrag);
             
-            // Automatisch nach unten scrollen
             const container = document.getElementById('log-container');
             container.scrollTop = container.scrollHeight;
             
-            // Historie auf maximal 50 Eintraege begrenzen, um Speicher zu schonen
             if (liste.children.length > 50) {
                 liste.removeChild(liste.firstChild);
             }
@@ -182,7 +175,7 @@
             );
 
             if (benoetigtesTeil) {
-                scanPausiert = true; 
+                scanPausiert = true; // Analyse sofort stoppen
                 
                 const setInfo = aktiveSets.find(s => s.set_nummer === benoetigtesTeil.set_nummer);
                 
@@ -196,10 +189,11 @@
 
                 await ladeDaten();
 
+                // Sperre auf 2.5 Sekunden erhoeht, um der Hand Zeit zu geben
                 setTimeout(() => {
                     document.getElementById('status-text').textContent = "Warte auf naechsten Stein...";
                     scanPausiert = false;
-                }, 2000);
+                }, 2500);
             } else {
                 schreibeLog(`Stein "${roboflowName}" wird aktuell in keinem Set benoetigt.`, 'warnung');
             }
@@ -259,8 +253,8 @@
             await starteKamera();
             document.getElementById('status-text').textContent = "Warte auf Scan...";
             
-            // Bild-Analyse jede Sekunde ausfuehren
-            setInterval(bildAnalysieren, 1000);
+            // Intervall auf 2000 Millisekunden (2 Sekunden) angehoben
+            setInterval(bildAnalysieren, 2000);
         }
 
         starteApp();
